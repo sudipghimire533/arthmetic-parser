@@ -8,171 +8,196 @@
 //! represented by a,b,c,d respectively
 //! Likewise, Open and close parenthesis are represented by e, f respectively
 //!
-//! ## Step by step on how this works
-//! 1) *Take input string from stdin*
-//!     Spaces in input are ignored and can be used for formatting purpose.
-//!     For example, following two statement are same:
-//!     - 100 a 200 a 50
-//!     - 100a200a50
-//! 2) *Iterate through the input string*
-//!     - If it is a number, then it is a value
 
-use std::borrow::Cow;
+const ADDITION: char = 'a';
+const SUBTRACTION: char = 'b';
+const MULTIPLICATION: char = 'c';
+const DIVISION: char = 'd';
+const OPEN_PAREN: char = 'e';
+const CLOSE_PAREN: char = 'f';
 
-const BASE: u32 = 10;
+const RADIX: u32 = 10;
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-#[repr(u8)]
-pub enum Operator {
-    Addition = b"a"[0] as u8,
-    Subtraction = b"b"[0] as u8,
-    Multiplication = b"c"[0] as u8,
-    Division = b"d"[0] as u8,
-    OpenParen = b"e"[0] as u8,
-    CloseParen = b"f"[0] as u8,
+type Number = i128;
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum Operand {
+    Operator(char),
+    Digit(u32),
+    Whitespace,
 }
 
-impl Operator {
-    fn as_u8(self) -> u8 {
-        self as u8
-    }
-}
-
-macro_rules! impl_numeric {
-    ( $type_name: ty ,? ) => {
-        impl crate::Numeric for $type_name {}
-    };
-}
-trait Numeric:
-    std::ops::Add<Output = Self>
-    + std::ops::Sub<Output = Self>
-    + std::ops::Mul<Output = Self>
-    + std::ops::Div<Output = Self>
-    + Copy
-    + std::fmt::Debug
-    + std::str::FromStr
-    + Eq
-{
-}
-
-/// Represent a single expression to be performed
-#[derive(Debug, Clone)]
-enum Expression<Number: Numeric> {
-    Addition(Box<Self>, Box<Self>),
-    Subtraction(Box<Self>, Box<Self>),
-    Multiplication(Box<Self>, Box<Self>),
-    Division(Box<Self>, Box<Self>),
-    Value(Number),
-}
-
-/// Is thsi value or operator
-pub enum Operand<Number> {
-    Value(Number),
-    Oper(Operator),
-}
-
-impl<Number: Numeric> Expression<Number> {
-    fn get_numeric(self) -> Number {
-        match self {
-            Self::Addition(left, right) => (*left).get_numeric() + (*right).get_numeric(),
-            Self::Subtraction(left, right) => (*left).get_numeric() - (*right).get_numeric(),
-            Self::Multiplication(left, right) => (*left).get_numeric() * (*right).get_numeric(),
-            Self::Division(left, right) => (*left).get_numeric() / (*right).get_numeric(),
-            Self::Value(val) => val,
-        }
-    }
-
-    fn split_once(expression: &str) -> (Option<Operand<Number>>, Cow<'_, str>) {
-        let first_byte = match expression.as_bytes().first() {
-            Some(byte) => *byte,
-            None => return (None, "".into()),
-        };
-
-        if first_byte == Operator::Addition.as_u8() {
-            (
-                Some(Operand::Oper(Operator::Addition)),
-                Cow::Borrowed(&expression[1..]),
-            )
-        } else if first_byte == Operator::Subtraction.as_u8() {
-            (
-                Some(Operand::Oper(Operator::Subtraction)),
-                Cow::Borrowed(&expression[1..]),
-            )
-        } else if first_byte == Operator::Multiplication.as_u8() {
-            (
-                Some(Operand::Oper(Operator::Multiplication)),
-                Cow::Borrowed(&expression[1..]),
-            )
-        } else if first_byte == Operator::Division.as_u8() {
-            (
-                Some(Operand::Oper(Operator::Division)),
-                Cow::Borrowed(&expression[1..]),
-            )
-        } else if first_byte == Operator::OpenParen.as_u8() {
-            (
-                Some(Operand::Oper(Operator::OpenParen)),
-                Cow::Borrowed(&expression[1..]),
-            )
-        } else if first_byte == Operator::CloseParen.as_u8() {
-            (
-                Some(Operand::Oper(Operator::CloseParen)),
-                Cow::Borrowed(&expression[1..]),
-            )
+impl Operand {
+    fn parse(ch: char) -> Option<Self> {
+        if let Some(digit) = ch.to_digit(RADIX) {
+            Some(Operand::Digit(digit))
+        } else if ch == ADDITION {
+            Some(Operand::Operator(ADDITION))
+        } else if ch == SUBTRACTION {
+            Some(Operand::Operator(SUBTRACTION))
+        } else if ch == MULTIPLICATION {
+            Some(Operand::Operator(MULTIPLICATION))
+        } else if ch == DIVISION {
+            Some(Operand::Operator(DIVISION))
+        } else if ch == OPEN_PAREN {
+            Some(Operand::Operator(OPEN_PAREN))
+        } else if ch == CLOSE_PAREN {
+            Some(Operand::Operator(CLOSE_PAREN))
+        } else if ch.is_whitespace() {
+            Some(Operand::Whitespace)
         } else {
-            let (digit_str, remaining_str): (String, String) =
-                expression.chars().partition(|c| c.is_digit(BASE));
-            (
-                digit_str.parse::<Number>().map(|a| Operand::Value(a)).ok(),
-                remaining_str.into(),
-            )
+            None
         }
     }
+}
 
-    fn make_one_expression(lhs: Box<Self>, expression: &str) -> (Option<Self>, Cow<'_, str>) {
-        match Self::split_once(expression) {
-            (None, rest) => (None, rest),
+/// Convert array of digits to number
+/// Example:
+/// input: &Vec::new([9, 8, 6, 6])
+/// output: Number::from(9866)
+fn combine_digit(digits: &[u32]) -> Number {
+    let mut res: Number = 0;
+    for (digit_index, digit) in digits.iter().rev().enumerate() {
+        let digit_value = digit * (10_u32.pow(digit_index as u32));
+        res += digit_value as i128;
+    }
+    res
+}
 
-            (Some(Operand::Value(val)), rest) => (Some(Self::Value(val)), rest),
+fn compute(raw_expression: String) -> Number {
+    let mut result = 0;
+    let mut digits_buf = vec![];
+    let mut last_operator = ADDITION;
 
-            (Some(Operand::Oper(operator)), rest) => match Self::split_once(&rest) {
-                (None, rest) => (None, rest.to_owned()),
+    for (char_index, input_char) in raw_expression.chars().enumerate() {
+        let operand = Operand::parse(input_char).expect(&format!(
+            "Unexpected character: {input_char:?} at index: {char_index}",
+        ));
 
-                (Some(Operand::Oper(_)), rest) => (None, rest.to_owned()),
+        match operand {
+            // Do nothing on whitespace
+            Operand::Whitespace => continue,
 
-                (Some(Operand::Value(val)), rest) => {
-                    todo!()
+            // it's a digit.
+            // Just push it into digits buffer
+            Operand::Digit(digit) => {
+                digits_buf.push(digit);
+            }
+
+            // It's a operator
+            // make a number from digits_buffer and apply last_operator
+            // to result
+            Operand::Operator(operator) => {
+                let last_digit = combine_digit(&digits_buf);
+                match last_operator {
+                    ADDITION => result += last_digit,
+                    SUBTRACTION => result -= last_digit,
+                    MULTIPLICATION => result *= last_digit,
+                    DIVISION => result /= last_digit,
+                    OPEN_PAREN => todo!(),
+                    CLOSE_PAREN => todo!(),
+                    unknown_operator => panic!("Unknown operator: {unknown_operator:?}"),
                 }
-            },
-        }
-    }
 
-    fn parse(mut expression: String) -> Option<Self> {
-        expression = expression.replace(" ", "");
-        let expression = expression.trim();
-
-        match Self::split_once(expression) {
-            // very first term is an expression
-            (Some(Operand::Oper(_)), _rest) => None,
-            // cannot parse
-            (None, _rest) => None,
-
-            // first term is a numeric value, we can continue
-            (Some(Operand::Value(first_val)), rest) => {
-                None
+                digits_buf.clear();
+                last_operator = operator;
             }
         }
     }
+
+    let last_digit = combine_digit(&digits_buf);
+    match last_operator {
+        ADDITION => result += last_digit,
+        SUBTRACTION => result -= last_digit,
+        MULTIPLICATION => result *= last_digit,
+        DIVISION => result /= last_digit,
+        OPEN_PAREN => todo!(),
+        CLOSE_PAREN => todo!(),
+        unknown_operator => panic!("Unknown operator: {unknown_operator:?}"),
+    }
+
+    result
 }
 
-fn main() {}
+pub fn main() {
+    // read the cli argument passed into this binary
+    let maybe_equation = std::env::args()
+        .collect::<Vec<_>>()
+        .get(1)
+        .iter()
+        .filter_map(|s| {
+            let s = s.trim().to_string();
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(equation) = maybe_equation.first() {
+        println!("Your equation: {equation:?}");
+        println!("=== Computing... ====");
+        let result = compute(equation.to_string());
+        println!("Result came out to be: {result}");
+
+        return;
+    }
+
+    println!("Write your equation:");
+    let input = std::io::stdin().lines().next().unwrap().unwrap();
+    println!("=== Computing... ====");
+
+    let result = compute(input);
+    println!("Result came out to be: {result}");
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parsing_non_paren() {
-        // 100 + 300 * 2 - 50 / 2
-        let statement = "100 a 300 c 2 b 50 d 2";
+    fn empty_string() {
+        assert_eq!(compute("".to_string()), 0);
+    }
+
+    #[test]
+    fn single_expression() {
+        assert_eq!(compute("9".to_string()), 9);
+        assert_eq!(compute(" 0 ".to_string()), 0);
+    }
+
+    #[test]
+    fn two_expression() {
+        // 9 - 9 = 0
+        assert_eq!(compute("9 b 9".to_string()), 0);
+        // 9 + 9 = 18
+        assert_eq!(compute("9 a 9".to_string()), 18);
+        // 5 * 4 = 20
+        assert_eq!(compute("5 c 4".to_string()), 20);
+        // 100 / 10 10
+        assert_eq!(compute("100 d 10".to_string()), 10);
+    }
+
+    #[test]
+    fn multi_expression() {
+        // 9 - 9 * 10 = 0 * 10 = 0
+        assert_eq!(compute("9 b 9 c 10".to_string()), 0);
+        // 10 + 10 - 10 * 10 / 10 = 20-10*10/10 = 10*10/10 = 100/10 = 10
+        assert_eq!(compute("10 a 10 b 10 c 10 d 10".to_string()), 10);
+    }
+
+    #[test]
+    fn can_start_with_operator() {
+        // - 10 + 50 = 0 - 10 + 50 = -10 + 50 = 40
+        assert_eq!(compute("b 10 a 50".to_string()), 40);
+    }
+
+    #[test]
+    fn test_combine_digit() {
+        assert_eq!(combine_digit(&[]), 0);
+        assert_eq!(combine_digit(&[9]), 9);
+        assert_eq!(combine_digit(&[1, 2]), 12);
+        assert_eq!(combine_digit(&[9, 8, 6, 6]), 9866);
     }
 }
