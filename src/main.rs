@@ -15,6 +15,7 @@ const MULTIPLICATION: char = 'c';
 const DIVISION: char = 'd';
 const OPEN_PAREN: char = 'e';
 const CLOSE_PAREN: char = 'f';
+const END_STATEMENT: char = ';';
 
 const RADIX: u32 = 10;
 
@@ -45,6 +46,8 @@ impl Operand {
             Some(Operand::Operator(CLOSE_PAREN))
         } else if ch.is_whitespace() {
             Some(Operand::Whitespace)
+        } else if ch == END_STATEMENT {
+            Some(Operand::Operator(END_STATEMENT))
         } else {
             None
         }
@@ -64,59 +67,94 @@ fn combine_digit(digits: &[u32]) -> Number {
     res
 }
 
-fn compute(raw_expression: String) -> Number {
-    let mut result = 0;
-    let mut digits_buf = vec![];
-    let mut last_operator = ADDITION;
+pub struct State {
+    pub result: Number,
+    pub digits_buf: Vec<u32>,
+    pub last_operator: char,
+}
 
-    for (char_index, input_char) in raw_expression.chars().enumerate() {
-        let operand = Operand::parse(input_char).expect(&format!(
-            "Unexpected character: {input_char:?} at index: {char_index}",
-        ));
+fn process_char<I: Iterator<Item = char>>(
+    expression_chars: &mut I,
+    input_char: char,
+    state: &mut State,
+) {
+    let operand =
+        Operand::parse(input_char).expect(&format!("Unexpected character: {input_char:?}",));
 
-        match operand {
-            // Do nothing on whitespace
-            Operand::Whitespace => continue,
+    match operand {
+        // Do nothing on whitespace
+        Operand::Whitespace => return,
 
-            // it's a digit.
-            // Just push it into digits buffer
-            Operand::Digit(digit) => {
-                digits_buf.push(digit);
+        // it's a digit.
+        // Just push it into digits buffer
+        Operand::Digit(digit) => {
+            state.digits_buf.push(digit);
+        }
+
+        Operand::Operator(OPEN_PAREN) => {
+            assert!(
+                state.digits_buf.is_empty(),
+                "Open parenthesis without operator"
+            );
+
+            let mut parenthesis_depth = 1;
+            let mut parenthesis_expr = String::new();
+            while parenthesis_depth != 0 {
+                let next_char = expression_chars.next().expect("Unlosed parenthesis");
+                parenthesis_expr.push(next_char);
+                if next_char == OPEN_PAREN {
+                    parenthesis_depth += 1;
+                } else if next_char == CLOSE_PAREN {
+                    parenthesis_depth -= 1;
+                }
             }
 
-            // It's a operator
-            // make a number from digits_buffer and apply last_operator
-            // to result
-            Operand::Operator(operator) => {
-                let last_digit = combine_digit(&digits_buf);
-                match last_operator {
-                    ADDITION => result += last_digit,
-                    SUBTRACTION => result -= last_digit,
-                    MULTIPLICATION => result *= last_digit,
-                    DIVISION => result /= last_digit,
-                    OPEN_PAREN => todo!(),
-                    CLOSE_PAREN => todo!(),
-                    unknown_operator => panic!("Unknown operator: {unknown_operator:?}"),
-                }
+            let paren_res = compute(parenthesis_expr);
+            state.digits_buf = paren_res
+                .to_string()
+                .chars()
+                .map(|c| c.to_digit(RADIX).unwrap())
+                .collect();
+        }
 
-                digits_buf.clear();
-                last_operator = operator;
+        Operand::Operator(CLOSE_PAREN) => {}
+
+        // It's a operator
+        // make a number from digits_buffer and apply last_operator
+        // to result
+        Operand::Operator(operator) => {
+            let last_digit = combine_digit(&state.digits_buf);
+            let last_operator = state.last_operator;
+
+            state.digits_buf.clear();
+            state.last_operator = operator;
+
+            match last_operator {
+                ADDITION => state.result += last_digit,
+                SUBTRACTION => state.result -= last_digit,
+                MULTIPLICATION => state.result *= last_digit,
+                DIVISION => state.result /= last_digit,
+                OPEN_PAREN | CLOSE_PAREN => unreachable!(),
+                unknown_operator => panic!("Unknown operator: {unknown_operator:?}"),
             }
         }
     }
+}
 
-    let last_digit = combine_digit(&digits_buf);
-    match last_operator {
-        ADDITION => result += last_digit,
-        SUBTRACTION => result -= last_digit,
-        MULTIPLICATION => result *= last_digit,
-        DIVISION => result /= last_digit,
-        OPEN_PAREN => todo!(),
-        CLOSE_PAREN => todo!(),
-        unknown_operator => panic!("Unknown operator: {unknown_operator:?}"),
+fn compute(raw_expression: String) -> Number {
+    let mut state = State {
+        result: 0,
+        digits_buf: vec![],
+        last_operator: ADDITION,
+    };
+
+    let mut expression_chars = raw_expression.chars();
+    while let Some(input_char) = expression_chars.next() {
+        process_char(&mut expression_chars, input_char, &mut state);
     }
+    process_char(&mut expression_chars, END_STATEMENT, &mut state);
 
-    result
+    state.result
 }
 
 pub fn main() {
@@ -156,6 +194,25 @@ pub fn main() {
 mod tests {
     use super::*;
 
+    // NOTE:
+    // this is the test given in assigment file
+    #[test]
+    fn assignment_test() {
+        // 3 + 2 * 4 = 5*4 = 20
+        assert_eq!(compute("3a2c4".to_string()), 20);
+        // 32 + 2 / 2 = 34/2 = 17
+        assert_eq!(compute("32a2d2".to_string()), 17);
+        // 500 + 10 - 66 * 32 = 510-66*32 = 444*32 = 14208
+        assert_eq!(compute("500a10b66c32".to_string()), 14208);
+        // 3 + (4 * 66) - 32 = 3+264-32 = 267-32 = 235
+        assert_eq!(compute("3ae4c66fb32".to_string()), 235);
+
+        // 3 * 4 / 2 + ((2 + 4 * 41) * 4)
+        // = 12/2+((2+4*41)*4) = 6+(246*4)
+        // = 6+984 = 990
+        assert_eq!(compute("3c4d2aee2a4c41fc4f".to_string()), 990);
+    }
+
     #[test]
     fn empty_string() {
         assert_eq!(compute("".to_string()), 0);
@@ -191,6 +248,20 @@ mod tests {
     fn can_start_with_operator() {
         // - 10 + 50 = 0 - 10 + 50 = -10 + 50 = 40
         assert_eq!(compute("b 10 a 50".to_string()), 40);
+    }
+
+    #[test]
+    fn parenthesis_emphasize() {
+        // 10 + 5 * 3 - 1 = 15*3-1 = 45-1 = 44
+        assert_eq!(compute("10 a 5 c 3 b 1".to_string()), 44);
+        // 10 + (5*3) - 1 = 10+15-1 = 25-1 = 24
+        assert_eq!(compute("10 a e 5 c 3 b 1 f".to_string()), 24);
+        // 10 + ( 5 * (3 - 1) ) - (10 - 5) + 5 = 10+(5*2)-(10-5)+5 = 10+10-(10-5)+5
+        // = 10+10-5+5 = 20-5+5 = 15+5 = 20
+        assert_eq!(
+            compute("10 a e5 c e3 b 1 ff b e 10 b 5f a 5".to_string()),
+            20
+        );
     }
 
     #[test]
